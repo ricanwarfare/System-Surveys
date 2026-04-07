@@ -7,6 +7,7 @@
 var RESULTS_FILE = "survey_results.txt";
 var ENCODE_OUTPUT = false; // Set to true to Base64 encode the output file
 var EVENT_LOG_LIMIT = 100;
+var ENABLE_PROCESS_HASHING = false; // Set to false by default to prevent JScript hangs on large files
 
 var fso = new ActiveXObject("Scripting.FileSystemObject");
 var shell = new ActiveXObject("WScript.Shell");
@@ -296,7 +297,7 @@ function SurveyProcesses() {
                                upperPath.indexOf("\\PERFLOGS\\") !== -1;
             
             if (isSuspicious) {
-                hash = GetFileHash(path);
+                hash = ENABLE_PROCESS_HASHING ? GetFileHash(path) : "Skipped (Disabled)";
             } else {
                 hash = "Skipped (Standard)";
             }
