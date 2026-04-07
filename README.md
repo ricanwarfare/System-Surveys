@@ -11,7 +11,8 @@ The scripts in this repository are built with a "Living off the Land" (LotL) phi
 ## Key Features
 
 ### 💻 Windows Survey (`win-survey.js`)
-*   **Stealth Hashing**: In-memory MD5 calculation for running processes (no `certutil.exe` or `powershell.exe`).
+*   **Intelligent Stealth Hashing**: In-memory MD5 calculation targets only suspicious execution paths (e.g., `Users`, `ProgramData`, `Temp`) to aggressively optimize speed without creating process anomalies (no `certutil.exe` or `powershell.exe`).
+*   **Process Verification**: Uses native COM file metadata to identify and flag running processes published by Microsoft natively in the results format.
 *   **WMI Obfuscation**: String fragmentation for namespaces and classes to evade static signature analysis.
 *   **Persistence Analysis**: Queries Scheduled Tasks (API 2.0), Startup Keys, and "fileless" WMI Event Subscriptions.
 *   **Infrastructure Sensitivity**: Identifies active Kernel Drivers and captures the Neighbor (ARP) cache.

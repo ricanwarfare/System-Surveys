@@ -255,14 +255,63 @@ function SurveyUsers() {
     });
 }
 
+var shellCompanyIndex = -1;
+function GetFileCompany(path) {
+    try {
+        if (!fso.FileExists(path)) return "";
+        var shellApp = new ActiveXObject("Shell.Application");
+        var folderObj = shellApp.NameSpace(fso.GetParentFolderName(path));
+        if (!folderObj) return "";
+        var itemObj = folderObj.ParseName(fso.GetFileName(path));
+        
+        if (shellCompanyIndex === -1) {
+            for (var i = 0; i < 50; i++) {
+                var header = folderObj.GetDetailsOf(null, i);
+                if (header && (header.toLowerCase() === "company" || header.toLowerCase() === "compañía")) {
+                    shellCompanyIndex = i;
+                    break;
+                }
+            }
+            if (shellCompanyIndex === -1) shellCompanyIndex = 33;
+        }
+        return folderObj.GetDetailsOf(itemObj, shellCompanyIndex) || "";
+    } catch(e) {
+        return "";
+    }
+}
+
 function SurveyProcesses() {
-    Section("Running Processes (with MD5)");
-    Log(Pad("PID", 8) + Pad("Name", 30) + Pad("MD5", 34) + "Path");
-    Log(Pad("---", 8) + Pad("----", 30) + Pad("---", 34) + "----");
+    Section("Running Processes (MD5 for suspicious paths)");
+    // Increased padding for Name to accommodate [MS] tag
+    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("MD5", 34) + "Path");
+    Log(Pad("---", 8) + Pad("----", 35) + Pad("---", 34) + "----");
     QueryWMI("SELECT * FROM Win32_Process", function(item) {
         var path = item.ExecutablePath || "N/A";
-        var hash = (path !== "N/A") ? GetFileHash(path) : "N/A";
-        Log(Pad(item.ProcessId, 8) + Pad(item.Name, 30) + Pad(hash, 34) + path);
+        var hash = "N/A";
+        var dispName = item.Name;
+        
+        if (path !== "N/A") {
+            var upperPath = path.toUpperCase();
+            // Flag paths that are common for persistence/malware, avoiding standard Windows directories
+            var isSuspicious = upperPath.indexOf("\\USERS\\") !== -1 ||
+                               upperPath.indexOf("\\PROGRAMDATA\\") !== -1 ||
+                               upperPath.indexOf("\\TEMP\\") !== -1 ||
+                               upperPath.indexOf("\\APPDATA\\") !== -1 ||
+                               upperPath.indexOf("\\PERFLOGS\\") !== -1;
+            
+            if (isSuspicious) {
+                hash = GetFileHash(path);
+            } else {
+                hash = "Skipped (Standard)";
+            }
+            
+            var company = GetFileCompany(path);
+            if (company.indexOf("Microsoft") !== -1) {
+                dispName += " [MS]";
+            }
+        }
+        
+        Log(Pad(item.ProcessId, 8) + Pad(dispName, 35) + Pad(hash, 34) + path);
     });
 }
 
