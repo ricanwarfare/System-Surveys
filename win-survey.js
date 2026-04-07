@@ -143,6 +143,10 @@ var MD5 = (function() {
 function GetFileHash(path) {
     try {
         if (!fso.FileExists(path)) return "N/A (File Missing)";
+        // Pure JScript string manipulation is terribly slow for large binaries. Cap at 5MB to prevent freezing.
+        var fileObj = fso.GetFile(path);
+        if (fileObj.Size > 5 * 1024 * 1024) return "Skipped (>5MB)";
+
         var stream = new ActiveXObject("ADODB.Stream");
         stream.Type = 1; // Binary
         stream.Open();
