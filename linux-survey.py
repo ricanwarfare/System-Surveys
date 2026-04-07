@@ -6,6 +6,7 @@ import pwd
 import grp
 import time
 import re
+import subprocess
 
 # Configuration
 RESULTS_FILE = "survey_results.txt"
@@ -81,6 +82,18 @@ def survey_processes():
             report(pad(pid, 8) + pad(name[:24], 25) + pad(md5, 34) + cmdline[:100])
         except:
             continue
+
+def survey_process_tree():
+    section("Process Hierarchy (ps -efH)")
+    try:
+        # Running ps -efH to get a hierarchical view of processes
+        output = subprocess.check_output(["ps", "-efH"], stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
+        for line in output.splitlines():
+            report(line)
+    except FileNotFoundError:
+        report("[!] ps command not found.")
+    except Exception as e:
+        report(f"[!] Error executing ps: {e}")
 
 def survey_network():
     section("Network Configuration")
@@ -238,6 +251,20 @@ def survey_arp():
                     report(pad(p[0], 20) + pad(p[1], 10) + pad(p[2], 10) + p[3])
     except: pass
 
+def survey_netstat():
+    section("Netstat Diagnostics (antup)")
+    try:
+        # Running netstat with the requested flags
+        # -a: all sockets, -n: numeric, -t: tcp, -u: udp, -p: program/pid
+        # Note: -p requires root to see all processes
+        output = subprocess.check_output(["netstat", "-antup"], stderr=subprocess.STDOUT).decode('utf-8', 'ignore')
+        for line in output.splitlines():
+            report(line)
+    except FileNotFoundError:
+        report("[!] netstat command not found. (Consider using 'ss' instead)")
+    except Exception as e:
+        report(f"[!] Error executing netstat: {e}")
+
 def survey_logs():
     section(f"Recent Logs (Last {LOG_DEPTH} lines)")
     log_file = "/var/log/syslog" if os.path.exists("/var/log/syslog") else "/var/log/messages"
@@ -257,7 +284,9 @@ def main():
     report("Starting Linux System Survey at " + time.ctime())
     survey_system_info()
     survey_processes()
+    survey_process_tree()
     survey_network()
+    survey_netstat()
     survey_users()
     survey_services()
     survey_packages()

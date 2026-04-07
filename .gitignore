@@ -1,3 +1,9 @@
 survey_results.txt
 *.log
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
