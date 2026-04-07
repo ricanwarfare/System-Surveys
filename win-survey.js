@@ -143,9 +143,9 @@ var MD5 = (function() {
 function GetFileHash(path) {
     try {
         if (!fso.FileExists(path)) return "N/A (File Missing)";
-        // Pure JScript string manipulation is terribly slow for large binaries. Cap at 5MB to prevent freezing.
+        // Pure JScript string manipulation is terribly slow for large binaries. Cap at 1MB to prevent freezing.
         var fileObj = fso.GetFile(path);
-        if (fileObj.Size > 5 * 1024 * 1024) return "Skipped (>5MB)";
+        if (fileObj.Size > 1 * 1024 * 1024) return "Skipped (>1MB)";
 
         var stream = new ActiveXObject("ADODB.Stream");
         stream.Type = 1; // Binary
@@ -154,27 +154,18 @@ function GetFileHash(path) {
         var binData = stream.Read();
         stream.Close();
 
-        // Convert binary data to string for the MD5 function
         var dom = new ActiveXObject("Microsoft.XMLDOM");
-        var el = dom.createElement("tmp");
-        el.dataType = "bin.base64";
-        el.nodeTypedValue = binData;
-        var b64 = el.text;
-        
-        // This is a bit inefficient for huge files, but works for standard executables
-        // For a more robust solution, chunking would be needed.
-        // We'll use a trick to get the string representation
         var node = dom.createElement("node");
         node.dataType = "bin.hex";
         node.nodeTypedValue = binData;
         var hex = node.text;
         
-        // Re-encoding hex to raw string for MD5 function
-        var raw = "";
+        // Using an array buffer is exponentially faster than string concatenation in JScript
+        var rawArr = [];
         for (var i = 0; i < hex.length; i += 2) {
-            raw += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+            rawArr.push(String.fromCharCode(parseInt(hex.substr(i, 2), 16)));
         }
-        return MD5(raw);
+        return MD5(rawArr.join(''));
     } catch (e) {
         return "Error: " + e.message;
     }
@@ -260,11 +251,12 @@ function SurveyUsers() {
 }
 
 var shellCompanyIndex = -1;
+var globalShellApp = null;
 function GetFileCompany(path) {
     try {
         if (!fso.FileExists(path)) return "";
-        var shellApp = new ActiveXObject("Shell.Application");
-        var folderObj = shellApp.NameSpace(fso.GetParentFolderName(path));
+        if (!globalShellApp) globalShellApp = new ActiveXObject("Shell.Application");
+        var folderObj = globalShellApp.NameSpace(fso.GetParentFolderName(path));
         if (!folderObj) return "";
         var itemObj = folderObj.ParseName(fso.GetFileName(path));
         
