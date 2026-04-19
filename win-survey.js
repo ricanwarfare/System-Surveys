@@ -125,29 +125,51 @@ function SurveySystemInfo() {
     });
 }
 
+function SafeArray(arr) {
+    // Safely convert WMI SafeArray to JScript array
+    // WMI returns SafeArrays that sometimes fail .toArray() on Win11/WSH
+    try {
+        if (!arr || arr === null) return [];
+        if (typeof arr === 'unknown') {
+            // Try VBArray conversion as fallback
+            try { return new VBArray(arr).toArray(); } catch(e2) { return []; }
+        }
+        if (typeof arr.toArray === 'function') return arr.toArray();
+        if (typeof arr === 'string') return [arr];
+        return [arr];
+    } catch (e) {
+        return [];
+    }
+}
+
 function SurveyNetwork() {
     Section("Network Configuration");
     QueryWMI("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True", function(item) {
         Log("Adapter: " + item.Description);
         Log("  MAC: " + (item.MACAddress || "N/A"));
-        if (item.IPAddress && item.IPAddress !== null) {
-            var ips = item.IPAddress.toArray();
-            var masks = item.IPSubnet ? item.IPSubnet.toArray() : [];
+        
+        var ips = SafeArray(item.IPAddress);
+        var masks = SafeArray(item.IPSubnet);
+        if (ips.length > 0) {
             for (var i = 0; i < ips.length; i++) {
-                // Filter out IPv6 if desired, or show both
                 Log("  IP: " + ips[i] + (masks[i] ? " (" + masks[i] + ")" : ""));
             }
         } else {
             Log("  IP: N/A");
         }
-        if (item.DefaultIPGateway && item.DefaultIPGateway !== null) {
-            Log("  Gateway: " + item.DefaultIPGateway.toArray().join(", "));
+        
+        var gateways = SafeArray(item.DefaultIPGateway);
+        if (gateways.length > 0) {
+            Log("  Gateway: " + gateways.join(", "));
         }
-        if (item.DNSServerSearchOrder && item.DNSServerSearchOrder !== null) {
-            Log("  DNS: " + item.DNSServerSearchOrder.toArray().join(", "));
+        
+        var dns = SafeArray(item.DNSServerSearchOrder);
+        if (dns.length > 0) {
+            Log("  DNS: " + dns.join(", "));
         } else {
             Log("  DNS: N/A");
         }
+        
         Log("  DHCP: " + (item.DHCPEnabled ? "Yes" : "No") + (item.DHCPServer ? " (" + item.DHCPServer + ")" : ""));
     });
 
