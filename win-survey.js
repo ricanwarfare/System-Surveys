@@ -183,8 +183,15 @@ function SurveyUsers() {
     Section("Logged-on Sessions");
     QueryWMI("SELECT * FROM Win32_LogonSession", function(item) {
         var startTime = FormatWMIDate(item.StartTime);
-        var type = ["", "", "Interactive", "Network", "Batch", "Service", "Proxy", "Unlock", "NetworkCleartext", "NewCredentials", "RemoteInteractive", "CachedInteractive"][item.LogonType] || item.LogonType;
-        Log("New Session: ID=" + item.Id + " | Type=" + type + " | Start=" + startTime);
+        var logonType = (typeof item.LogonType === 'number' && item.LogonType > 0) ? item.LogonType : 0;
+        var typeMap = {
+            2: "Interactive", 3: "Network", 4: "Batch", 5: "Service",
+            6: "Proxy", 7: "Unlock", 8: "NetworkCleartext",
+            9: "NewCredentials", 10: "RemoteInteractive", 11: "CachedInteractive"
+        };
+        var type = typeMap[logonType] || (logonType > 0 ? "Type" + logonType : "Unknown");
+        var sessionId = item.LogonId || item.Id || "N/A";
+        Log("Session: ID=" + sessionId + " | Type=" + type + " | Start=" + startTime);
     });
 }
 
