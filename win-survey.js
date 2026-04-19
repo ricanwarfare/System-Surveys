@@ -149,11 +149,19 @@ function SafeArray(arr) {
 }
 
 function RunCommand(cmd) {
-    // Run a command and return its stdout, or empty string on error
+    // Run a command via shell.Run (hidden window) with temp file output
+    // shell.Exec can deadlock on large output (small buffer)
     try {
-        var exec = shell.Exec(cmd);
-        while (exec.Status === 0) WScript.Sleep(50);
-        if (exec.ExitCode === 0) return exec.StdOut.ReadAll();
+        var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
+        var tmpFile = tempDir + "\\sys_cmd_" + RandomSuffix() + ".out";
+        shell.Run('cmd.exe /c ' + cmd + ' > "' + tmpFile + '" 2>&1', 0, true);
+        if (fso.FileExists(tmpFile)) {
+            var f = fso.OpenTextFile(tmpFile, 1);
+            var output = f.AtEndOfStream ? "" : f.ReadAll();
+            f.Close();
+            try { fso.DeleteFile(tmpFile); } catch(e2) {}
+            return output;
+        }
     } catch(e) {}
     return "";
 }
