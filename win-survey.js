@@ -7,7 +7,7 @@
 var RESULTS_FILE = ""; // Empty = auto-generate with hostname
 var ENCODE_OUTPUT = false; // Set to true to Base64 encode the output file
 var EVENT_LOG_LIMIT = 100;
-var ENABLE_PROCESS_HASHING = true; // Use certutil to hash all processes limitlessly
+var ENABLE_PROCESS_HASHING = false; // Default: off. Use --hash to enable
 
 var fso = new ActiveXObject("Scripting.FileSystemObject");
 var shell = new ActiveXObject("WScript.Shell");
@@ -798,11 +798,14 @@ try {
             encodeOutput = true;
         } else if (args(a) === "--no-hash") {
             skipHashing = true;
+        } else if (args(a) === "--hash") {
+            skipHashing = false;
         } else if (args(a) === "--help") {
             WScript.Echo("Usage: cscript /nologo win-survey.js [options]");
             WScript.Echo("  --output <file>   Output file path (default: survey_results.txt)");
             WScript.Echo("  --encode          Base64 encode the output");
-            WScript.Echo("  --no-hash         Skip process hashing (faster)");
+            WScript.Echo("  --no-hash         Skip process hashing (default: off)");
+            WScript.Echo("  --hash            Enable process hashing (MD5 via certutil)");
             WScript.Echo("  --help            Show this help");
             WScript.Quit(0);
         }

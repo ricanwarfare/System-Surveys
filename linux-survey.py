@@ -30,7 +30,7 @@ class Config:
     output_format: str = 'text'
     skip_modules: list = field(default_factory=list)
     only_modules: list = field(default_factory=list)
-    no_hash: bool = False
+    no_hash: bool = True  # Default: off (skip hashing for speed)
     log_depth: int = 300
 
 config = Config()
