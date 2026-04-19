@@ -655,7 +655,7 @@ function SurveyEventLogs() {
             // But standard WMI enumeration is usually sequential.
             for (; !enumItems.atEnd() && count < EVENT_LOG_LIMIT; enumItems.moveNext()) {
                 var log = enumItems.item();
-                Log("[" + FormatWMIDate(log.TimeGenerated) + "] ID: " + log.EventCode + " | Type: " + log.Type + " | Source: " + log.SourceName);
+                Log("[" + FormatWMIDate(log.TimeGenerated) + "] ID: " + log.EventCode + " | Type: " + log.Type + " | Category: " + (log.Category || "N/A") + " | Source: " + log.SourceName);
                 // Log("Message: " + log.Message.substr(0, 100) + "...");
                 count++;
             }
