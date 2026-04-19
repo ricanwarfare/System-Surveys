@@ -4,7 +4,7 @@
  * Runs via: cscript /nologo win-survey.js
  */
 
-var RESULTS_FILE = "survey_results.txt";
+var RESULTS_FILE = ""; // Empty = auto-generate with hostname
 var ENCODE_OUTPUT = false; // Set to true to Base64 encode the output file
 var EVENT_LOG_LIMIT = 100;
 var ENABLE_PROCESS_HASHING = true; // Use certutil to hash all processes limitlessly
@@ -654,6 +654,11 @@ try {
     // Parse command-line arguments
     var args = WScript.Arguments;
     var outputFileName = RESULTS_FILE;
+    if (!outputFileName) {
+        var hostName = ".";
+        try { hostName = shell.ExpandEnvironmentStrings("%COMPUTERNAME%"); } catch(e) { hostName = "unknown"; }
+        outputFileName = "survey_" + hostName + ".txt";
+    }
     var encodeOutput = ENCODE_OUTPUT;
     var skipHashing = !ENABLE_PROCESS_HASHING;
 

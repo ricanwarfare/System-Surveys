@@ -723,7 +723,7 @@ def survey_logs():
 
 def main():
     parser = argparse.ArgumentParser(description='Linux System Survey — Living off the Land')
-    parser.add_argument('-o', '--output', default='survey_results.txt', help='Output file path')
+    parser.add_argument('-o', '--output', default='', help='Output file path (default: survey_<hostname>.txt)'),
     parser.add_argument('-f', '--format', choices=['text', 'json'], default='text', help='Output format')
     parser.add_argument('--skip', nargs='*', default=[], help='Module names to skip')
     parser.add_argument('--only', nargs='*', default=[], help='Only run these modules')
@@ -731,7 +731,8 @@ def main():
     parser.add_argument('--log-depth', type=int, default=300, help='Number of log lines to include')
     args = parser.parse_args()
 
-    config.output_file = args.output
+    if not config.output_file:
+        config.output_file = f"survey_{os.uname().nodename}.txt"
     config.output_format = args.format
     config.skip_modules = args.skip
     config.only_modules = args.only
