@@ -18,6 +18,27 @@ function Log(msg) {
     logBuffer += msg + "\r\n";
 }
 
+function EscapeBatch(str) {
+    return str.replace(/([&|^<>"])/g, "^$1");
+}
+
+function SafeEnvValue(key, value) {
+    var sensitivePattern = /key|secret|password|passwd|token|credential|private|auth/i;
+    if (sensitivePattern.test(key)) {
+        return value.length > 4 ? value.substring(0, 4) + "********" : "****";
+    }
+    return value;
+}
+
+function RandomSuffix() {
+    var chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+    var result = "";
+    for (var i = 0; i < 8; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+}
+
 // --- Base64 Implementation ---
 var Base64 = (function() {
     var keys = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=";
@@ -134,7 +155,12 @@ function SurveyUsers() {
         QueryWMI(query, function(assoc) {
             // PartComponent is the user/group reference
             var memberPath = assoc.PartComponent; 
-            Log("  Admin Member: " + memberPath.split('Name="')[1].split('"')[0]);
+            var nameMatch = memberPath.match(/Name="([^"]+)"/);
+            if (nameMatch) {
+                Log("  Admin Member: " + nameMatch[1]);
+            } else {
+                Log("  Admin Member: " + memberPath); // Fallback: log raw path
+            }
         });
     });
 
@@ -195,14 +221,14 @@ function SurveyProcesses() {
     if (ENABLE_PROCESS_HASHING) {
         try {
             var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
-            var batPath = tempDir + "\\sys_hash_" + Math.floor(Math.random() * 10000) + ".bat";
-            var outPath = tempDir + "\\sys_hash_out_" + Math.floor(Math.random() * 10000) + ".txt";
+            var batPath = tempDir + "\\sys_hash_" + RandomSuffix() + ".bat";
+            var outPath = tempDir + "\\sys_hash_out_" + RandomSuffix() + ".txt";
             
             var batFile = fso.CreateTextFile(batPath, true);
             batFile.WriteLine("@echo off");
             for (var p in uniquePaths) {
                 if (fso.FileExists(p)) {
-                    batFile.WriteLine('certutil -hashfile "' + p + '" MD5');
+                    batFile.WriteLine('certutil -hashfile "' + EscapeBatch(p) + '" SHA256');
                 }
             }
             batFile.Close();
@@ -219,25 +245,31 @@ function SurveyProcesses() {
                 var currentPath = null;
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i].replace(/\r/g, "");
-                    // Wait for CertUtil "MD5 hash of C:\..." marker
+                    // Wait for CertUtil "SHA256 hash of C:\..." marker
                     if (line.indexOf("hash of ") !== -1) {
                         currentPath = line.substring(line.indexOf("hash of ") + 8, line.length - 1);
-                    } else if (currentPath && line.length === 32 && /^[0-9a-fA-F]+$/.test(line.replace(/\s/g, ""))) {
+                    } else if (currentPath && line.length === 64 && /^[0-9a-fA-F]{64}$/.test(line.replace(/\s/g, ""))) {
                         hashMap[currentPath.toLowerCase()] = line.replace(/\s/g, "").toLowerCase();
                         currentPath = null;
                     }
                 }
-                fso.DeleteFile(outPath);
             }
-            if (fso.FileExists(batPath)) fso.DeleteFile(batPath);
         } catch(e) {
             Log("Error during batch hashing: " + e.message);
+        } finally {
+            // Always clean up temp files
+            if (typeof outPath !== 'undefined' && fso.FileExists(outPath)) {
+                try { fso.DeleteFile(outPath); } catch(e2) {}
+            }
+            if (typeof batPath !== 'undefined' && fso.FileExists(batPath)) {
+                try { fso.DeleteFile(batPath); } catch(e2) {}
+            }
         }
     }
     
     // 3. Output results
-    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("MD5", 34) + "Path");
-    Log(Pad("---", 8) + Pad("----", 35) + Pad("---", 34) + "----");
+    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("SHA-256", 66) + "Path");
+    Log(Pad("---", 8) + Pad("----", 35) + Pad("-------", 66) + "----");
     
     for (var j = 0; j < processes.length; j++) {
         var p = processes[j];
@@ -257,7 +289,7 @@ function SurveyProcesses() {
             }
         }
         
-        Log(Pad(p.PID, 8) + Pad(dispName, 35) + Pad(hash, 34) + p.Path);
+        Log(Pad(p.PID, 8) + Pad(dispName, 35) + Pad(hash, 66) + p.Path);
     }
 }
 
@@ -278,15 +310,14 @@ function SurveyStartup() {
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
         "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
     ];
+    var _loc = "Wbem" + "Scripting" + "." + "S" + "Wbem" + "Locator";
+    var locator = new ActiveXObject(_loc);
+    var _rd = "root" + "\\" + "default";
+    var reg = locator.ConnectServer(".", _rd).Get("StdRegProv");
+
     for (var i = 0; i < keys.length; i++) {
         Log("\nChecking: " + keys[i]);
         try {
-            // RegRead is tricky for listing values, we'll use shell execute for reg query to be reliable
-            // but that spawns a process. A better way is WMI StdRegProv.
-            var _loc = "Wbem" + "Scripting" + "." + "S" + "Wbem" + "Locator";
-            var locator = new ActiveXObject(_loc);
-            var _rd = "root" + "\\" + "default";
-            var reg = locator.ConnectServer(".", _rd).Get("StdRegProv");
             var hDefKey = (keys[i].indexOf("HKLM") === 0) ? 0x80000002 : 0x80000001;
             var subKey = keys[i].substr(5);
             
@@ -412,6 +443,15 @@ function SurveyPSHistory() {
 
 function SurveySecurityProducts() {
     Section("Security Product Status (AV/EDR)");
+
+    // Check if this is a server OS (SecurityCenter2 is client-only)
+    var isServerOS = false;
+    QueryWMI("SELECT * FROM Win32_OperatingSystem", function(item) {
+        if (item.ProductType && item.ProductType !== "1") {
+            isServerOS = true;
+        }
+    });
+
     try {
         // SecurityCenter2 is client-only (Vista+)
         var _sc = "win" + "mgmts" + ":" + "\\\\" + ".\\" + "root" + "\\" + "Security" + "Center2";
@@ -426,7 +466,11 @@ function SurveySecurityProducts() {
             }
         }
     } catch (e) {
-        Log("Could not query SecurityCenter2 (Server OS or Access Denied)");
+        if (isServerOS) {
+            Log("SecurityCenter2 is not available on Server OS (client-only namespace).");
+        } else {
+            Log("Error querying SecurityCenter2: " + e.message);
+        }
     }
 }
 
@@ -442,7 +486,15 @@ function SurveyEnvVars() {
     var vars = shell.Environment("PROCESS");
     var enumVars = new Enumerator(vars);
     for (; !enumVars.atEnd(); enumVars.moveNext()) {
-        Log("  " + enumVars.item());
+        var item = enumVars.item();
+        var eqPos = item.indexOf('=');
+        if (eqPos !== -1) {
+            var key = item.substring(0, eqPos);
+            var value = item.substring(eqPos + 1);
+            Log("  " + key + "=" + SafeEnvValue(key, value));
+        } else {
+            Log("  " + item);
+        }
     }
 }
 
@@ -592,6 +644,41 @@ function SurveyEventLogs() {
 
 // --- Main ---
 try {
+    // WSH deprecation warning
+    if (typeof WScript !== "undefined") {
+        WScript.Echo("NOTE: Windows Script Host (WSH) is deprecated by Microsoft.");
+        WScript.Echo("Consider migrating to PowerShell for long-term compatibility.");
+        WScript.Echo("");
+    }
+
+    // Parse command-line arguments
+    var args = WScript.Arguments;
+    var outputFileName = RESULTS_FILE;
+    var encodeOutput = ENCODE_OUTPUT;
+    var skipHashing = !ENABLE_PROCESS_HASHING;
+
+    for (var a = 0; a < args.length; a++) {
+        if (args(a) === "--output" && a + 1 < args.length) {
+            outputFileName = args(a + 1); a++;
+        } else if (args(a) === "--encode") {
+            encodeOutput = true;
+        } else if (args(a) === "--no-hash") {
+            skipHashing = true;
+        } else if (args(a) === "--help") {
+            WScript.Echo("Usage: cscript /nologo win-survey.js [options]");
+            WScript.Echo("  --output <file>   Output file path (default: survey_results.txt)");
+            WScript.Echo("  --encode          Base64 encode the output");
+            WScript.Echo("  --no-hash         Skip process hashing (faster)");
+            WScript.Echo("  --help            Show this help");
+            WScript.Quit(0);
+        }
+    }
+
+    // Apply CLI overrides
+    if (skipHashing) {
+        ENABLE_PROCESS_HASHING = false;
+    }
+
     Log("Starting System Survey at " + new Date());
     SurveySystemInfo();
     SurveyNetwork();
@@ -614,12 +701,12 @@ try {
     Log("\nSurvey completed at " + new Date());
     
     // Final Write
-    var finalOutput = ENCODE_OUTPUT ? Base64.encode(logBuffer) : logBuffer;
-    var logFile = fso.CreateTextFile(RESULTS_FILE, true);
+    var finalOutput = encodeOutput ? Base64.encode(logBuffer) : logBuffer;
+    var logFile = fso.CreateTextFile(outputFileName, true);
     logFile.Write(finalOutput);
     logFile.Close();
 } catch (e) {
     WScript.Echo("FATAL ERROR: " + e.message);
 } finally {
-    WScript.Echo("\nResults saved to " + RESULTS_FILE);
+    WScript.Echo("\nResults saved to " + outputFileName);
 }
