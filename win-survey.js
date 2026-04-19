@@ -198,21 +198,21 @@ function SurveyNetwork() {
         Log("  DHCP: " + (item.DHCPEnabled ? "Yes" : "No") + (item.DHCPServer ? " (" + item.DHCPServer + ")" : ""));
     });
 
-    // Fallback: netsh for IP/DNS when WMI SafeArray fails
-    Section("Network Configuration (netsh fallback)");
+    // Fallback: ipconfig /all + netsh for IP/DNS when WMI SafeArray fails
+    Section("Network Configuration (ipconfig /all)");
     try {
-        var netshOut = RunCommand('cmd.exe /c netsh interface ip show config 2>nul');
-        if (netshOut.length > 0) {
-            var lines = netshOut.split('\n');
+        var ipconfigOut = RunCommand('cmd.exe /c ipconfig /all 2>nul');
+        if (ipconfigOut.length > 0) {
+            var lines = ipconfigOut.split('\n');
             for (var i = 0; i < lines.length; i++) {
                 var line = lines[i].replace(/\r/g, "");
-                if (line.trim().length > 0) Log("  " + line);
+                Log(line);
             }
         } else {
-            Log("  netsh not available");
+            Log("  ipconfig not available");
         }
     } catch(e) {
-        Log("  netsh error: " + e.message);
+        Log("  ipconfig error: " + e.message);
     }
 
     Section("Network Connections (netstat -anob)");
