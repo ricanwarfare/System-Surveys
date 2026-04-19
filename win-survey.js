@@ -142,8 +142,33 @@ function SafeArray(arr) {
     }
 }
 
+function SafeArray(arr) {
+    // Safely convert WMI SafeArray to JScript array
+    try {
+        if (!arr || arr === null) return [];
+        if (typeof arr === 'unknown') {
+            try { return new VBArray(arr).toArray(); } catch(e2) { return []; }
+        }
+        if (typeof arr.toArray === 'function') return arr.toArray();
+        if (typeof arr === 'string') return [arr];
+        return [arr];
+    } catch (e) {
+        return [];
+    }
+}
+
+function RunCommand(cmd) {
+    // Run a command and return its stdout, or empty string on error
+    try {
+        var exec = shell.Exec(cmd);
+        while (exec.Status === 0) WScript.Sleep(50);
+        if (exec.ExitCode === 0) return exec.StdOut.ReadAll();
+    } catch(e) {}
+    return "";
+}
+
 function SurveyNetwork() {
-    Section("Network Configuration");
+    Section("Network Configuration (WMI)");
     QueryWMI("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True", function(item) {
         Log("Adapter: " + item.Description);
         Log("  MAC: " + (item.MACAddress || "N/A"));
@@ -155,7 +180,7 @@ function SurveyNetwork() {
                 Log("  IP: " + ips[i] + (masks[i] ? " (" + masks[i] + ")" : ""));
             }
         } else {
-            Log("  IP: N/A");
+            Log("  IP: (see netsh output below)");
         }
         
         var gateways = SafeArray(item.DefaultIPGateway);
@@ -167,11 +192,55 @@ function SurveyNetwork() {
         if (dns.length > 0) {
             Log("  DNS: " + dns.join(", "));
         } else {
-            Log("  DNS: N/A");
+            Log("  DNS: (see netsh output below)");
         }
         
         Log("  DHCP: " + (item.DHCPEnabled ? "Yes" : "No") + (item.DHCPServer ? " (" + item.DHCPServer + ")" : ""));
     });
+
+    // Fallback: netsh for IP/DNS when WMI SafeArray fails
+    Section("Network Configuration (netsh fallback)");
+    try {
+        var netshOut = RunCommand('cmd.exe /c netsh interface ip show config 2>nul');
+        if (netshOut.length > 0) {
+            var lines = netshOut.split('\n');
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].replace(/\r/g, "");
+                if (line.trim().length > 0) Log("  " + line);
+            }
+        } else {
+            Log("  netsh not available");
+        }
+    } catch(e) {
+        Log("  netsh error: " + e.message);
+    }
+
+    Section("Network Connections (netstat -anob)");
+    try {
+        var netstatOut = RunCommand('cmd.exe /c netstat -anob 2>nul');
+        if (netstatOut.length > 0) {
+            var lines = netstatOut.split('\n');
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].replace(/\r/g, "");
+                Log(line);
+            }
+        } else {
+            Log("  netstat not available (requires elevated privileges for -b flag)");
+            // Try without -b (no process names)
+            try {
+                var netstatAn = RunCommand('cmd.exe /c netstat -an 2>nul');
+                if (netstatAn.length > 0) {
+                    Log("  (showing netstat -an without process names)");
+                    var anLines = netstatAn.split('\n');
+                    for (var j = 0; j < anLines.length; j++) {
+                        Log(anLines[j].replace(/\r/g, ""));
+                    }
+                }
+            } catch(e2) {}
+        }
+    } catch(e) {
+        Log("  netstat error: " + e.message);
+    }
 
     Section("Network Shares");
     QueryWMI("SELECT * FROM Win32_Share", function(item) {
