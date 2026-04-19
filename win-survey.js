@@ -250,7 +250,7 @@ function SurveyProcesses() {
             batFile.Close();
             
             // Run entirely hidden (0) and wait to return (true)
-            shell.Run('cmd.exe /c "' + batPath + '" > "' + outPath + '"', 0, true);
+            shell.Run('cmd.exe /c "' + batPath + '" > "' + outPath + '" 2>&1', 0, true);
             
             if (fso.FileExists(outPath)) {
                 var outFile = fso.OpenTextFile(outPath, 1);
@@ -259,14 +259,38 @@ function SurveyProcesses() {
                 
                 var lines = output.split('\n');
                 var currentPath = null;
+                var hashBuffer = "";
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i].replace(/\r/g, "");
-                    // Wait for CertUtil "SHA256 hash of C:\..." marker
+                    // CertUtil outputs: "SHA256 hash of C:\path\file.exe:\n<hash>\n  CertUtil: -hashfile command completed successfully."
+                    // On some Windows versions, the hash may be split across multiple lines
                     if (line.indexOf("hash of ") !== -1) {
-                        currentPath = line.substring(line.indexOf("hash of ") + 8, line.length - 1);
-                    } else if (currentPath && line.length === 64 && /^[0-9a-fA-F]{64}$/.test(line.replace(/\s/g, ""))) {
-                        hashMap[currentPath.toLowerCase()] = line.replace(/\s/g, "").toLowerCase();
-                        currentPath = null;
+                        // Extract path from "SHA256 hash of C:\path\file.exe:"
+                        var hashOfIdx = line.indexOf("hash of ");
+                        // The path goes from after "hash of " to end of line (may end with colon)
+                        var pathPart = line.substring(hashOfIdx + 8);
+                        // Remove trailing colon if present
+                        if (pathPart.charAt(pathPart.length - 1) === ':') pathPart = pathPart.substring(0, pathPart.length - 1);
+                        currentPath = pathPart;
+                        hashBuffer = "";
+                    } else if (currentPath) {
+                        // Accumulate hash characters (may be split across lines)
+                        var cleaned = line.replace(/\s/g, "");
+                        if (/^[0-9a-fA-F]+$/.test(cleaned) && cleaned.length > 0) {
+                            hashBuffer += cleaned.toLowerCase();
+                            // SHA-256 is exactly 64 hex chars
+                            if (hashBuffer.length === 64) {
+                                hashMap[currentPath.toLowerCase()] = hashBuffer;
+                                currentPath = null;
+                                hashBuffer = "";
+                            }
+                        } else if (cleaned.length === 0) {
+                            // Empty line — skip
+                        } else {
+                            // Not a hash line — reset
+                            currentPath = null;
+                            hashBuffer = "";
+                        }
                     }
                 }
             }
