@@ -273,7 +273,7 @@ function GetFileCompany(path) {
 }
 
 function SurveyProcesses() {
-    Section("Running Processes (SHA-1 Hashing)");
+    Section("Running Processes");
     var processes = [];
     var uniquePaths = {};
     
@@ -290,47 +290,62 @@ function SurveyProcesses() {
         });
     });
     
-    // 2. Hash unique paths individually via certutil shell.Exec
-    // More reliable than batch file — no temp files, no parsing issues
+    // 2. Batch hash all unique paths via single certutil call (silent, no visible windows)
     var hashMap = {};
     if (ENABLE_PROCESS_HASHING) {
-        var paths = [];
-        for (var p in uniquePaths) paths.push(p);
-        Log("  Hashing " + paths.length + " unique executables...");
-        
-        for (var i = 0; i < paths.length; i++) {
-            var filePath = paths[i];
-            if (!fso.FileExists(filePath)) continue;
-            try {
-                var exec = shell.Exec('certutil -hashfile "' + filePath + '" SHA1');
-                // Wait for completion (timeout after 5 seconds per file)
-                var waited = 0;
-                while (exec.Status === 0 && waited < 100) {
-                    WScript.Sleep(50);
-                    waited++;
+        try {
+            var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
+            var batPath = tempDir + "\\sys_" + RandomSuffix() + ".bat";
+            var outPath = tempDir + "\\sys_" + RandomSuffix() + ".out";
+            
+            var batFile = fso.CreateTextFile(batPath, true);
+            batFile.WriteLine("@echo off");
+            for (var p in uniquePaths) {
+                if (fso.FileExists(p)) {
+                    batFile.WriteLine('certutil -hashfile "' + EscapeBatch(p) + '" MD5');
                 }
-                if (exec.Status === 1) {
-                    var output = exec.StdOut.ReadAll();
-                    // Parse: find the 40-char hex line after "SHA1 hash of"
-                    var lines = output.split('\n');
-                    for (var k = 0; k < lines.length; k++) {
-                        var line = lines[k].replace(/\r/g, "");
-                        if (line.length === 40 && /^[0-9a-fA-F]{40}$/.test(line)) {
-                            hashMap[filePath.toLowerCase()] = line.toLowerCase();
-                            break;
-                        }
+            }
+            batFile.Close();
+            
+            // Run hidden (0 = no window), wait for completion (true)
+            shell.Run('cmd.exe /c "' + batPath + '" > "' + outPath + '" 2>&1', 0, true);
+            
+            if (fso.FileExists(outPath)) {
+                var outFile = fso.OpenTextFile(outPath, 1);
+                var output = outFile.AtEndOfStream ? "" : outFile.ReadAll();
+                outFile.Close();
+                
+                // Parse: MD5 certutil output is simple:
+                // MD5 hash of C:\path\file.exe:
+                // a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6
+                // CertUtil: -hashfile command completed successfully.
+                var lines = output.split('\n');
+                var currentPath = null;
+                for (var i = 0; i < lines.length; i++) {
+                    var line = lines[i].replace(/\r/g, "");
+                    if (line.indexOf("hash of ") !== -1) {
+                        // "MD5 hash of C:\path\file.exe:"
+                        var start = line.indexOf("hash of ") + 8;
+                        var pathPart = line.substring(start);
+                        if (pathPart.charAt(pathPart.length - 1) === ':') pathPart = pathPart.substring(0, pathPart.length - 1);
+                        currentPath = pathPart;
+                    } else if (currentPath && line.length === 32 && /^[0-9a-fA-F]{32}$/.test(line)) {
+                        hashMap[currentPath.toLowerCase()] = line.toLowerCase();
+                        currentPath = null;
                     }
                 }
-            } catch(e) {
-                // Skip this file — hashing is best-effort
             }
+        } catch(e) {
+            Log("  [Hashing failed: " + e.message + "]");
+        } finally {
+            try { if (typeof outPath !== 'undefined' && fso.FileExists(outPath)) fso.DeleteFile(outPath); } catch(e2) {}
+            try { if (typeof batPath !== 'undefined' && fso.FileExists(batPath)) fso.DeleteFile(batPath); } catch(e2) {}
         }
-        Log("  Hashed " + countKeys(hashMap) + " of " + paths.length + " executables");
     }
     
     // 3. Output results
-    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("SHA-1", 42) + "Path");
-    Log(Pad("---", 8) + Pad("----", 35) + Pad("-----", 42) + "----");
+    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("MD5", 34) + "Path");
+    Log(Pad("---", 8) + Pad("----", 35) + Pad("---", 34) + "----");
     
     for (var j = 0; j < processes.length; j++) {
         var p = processes[j];
