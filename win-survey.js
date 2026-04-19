@@ -148,13 +148,34 @@ function SafeArray(arr) {
     }
 }
 
-function RunCommand(cmd) {
-    // Run a command via shell.Run (hidden window) with temp file output
-    // shell.Exec can deadlock on large output (small buffer)
+function RunCommand(cmd, timeoutMs) {
+    // Run a command via shell.Run (hidden window) with temp file output + timeout
+    // Default timeout: 30 seconds
+    if (!timeoutMs) timeoutMs = 30000;
     try {
         var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
         var tmpFile = tempDir + "\\sys_cmd_" + RandomSuffix() + ".out";
-        shell.Run('cmd.exe /c ' + cmd + ' > "' + tmpFile + '" 2>&1', 0, true);
+        // Run hidden (0), don't wait (false) — we poll with our own timeout
+        shell.Run('cmd.exe /c ' + cmd + ' > "' + tmpFile + '" 2>&1', 0, false);
+        // Wait for output file to appear
+        var waited = 0;
+        while (!fso.FileExists(tmpFile) && waited < timeoutMs) {
+            WScript.Sleep(100);
+            waited += 100;
+        }
+        if (!fso.FileExists(tmpFile)) return ""; // Timeout
+        // Wait for file size to stabilize (process still writing)
+        var lastSize = -1;
+        var stableCount = 0;
+        waited = 0;
+        while (waited < timeoutMs && stableCount < 3) {
+            WScript.Sleep(200);
+            waited += 200;
+            try {
+                var curSize = fso.GetFile(tmpFile).Size;
+                if (curSize === lastSize) { stableCount++; } else { stableCount = 0; lastSize = curSize; }
+            } catch(e) { stableCount = 0; }
+        }
         if (fso.FileExists(tmpFile)) {
             var f = fso.OpenTextFile(tmpFile, 1);
             var output = f.AtEndOfStream ? "" : f.ReadAll();
@@ -170,7 +191,7 @@ function SurveyNetwork() {
     // Primary: ipconfig /all — most reliable for IP/DNS/DHCP on all Windows
     Section("Network Configuration (ipconfig /all)");
     try {
-        var ipconfigOut = RunCommand('cmd.exe /c ipconfig /all 2>nul');
+        var ipconfigOut = RunCommand('ipconfig /all', 15000);
         if (ipconfigOut.length > 0) {
             var lines = ipconfigOut.split('\n');
             for (var i = 0; i < lines.length; i++) {
@@ -185,7 +206,7 @@ function SurveyNetwork() {
 
     Section("Network Connections (netstat -anob)");
     try {
-        var netstatOut = RunCommand('cmd.exe /c netstat -anob 2>nul');
+        var netstatOut = RunCommand('netstat -anob', 60000);
         if (netstatOut.length > 0) {
             var lines = netstatOut.split('\n');
             for (var i = 0; i < lines.length; i++) {
@@ -196,7 +217,7 @@ function SurveyNetwork() {
             Log("  netstat not available (requires elevated privileges for -b flag)");
             // Try without -b (no process names)
             try {
-                var netstatAn = RunCommand('cmd.exe /c netstat -an 2>nul');
+                var netstatAn = RunCommand('netstat -an', 30000);
                 if (netstatAn.length > 0) {
                     Log("  (showing netstat -an without process names)");
                     var anLines = netstatAn.split('\n');
