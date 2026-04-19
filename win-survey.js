@@ -380,18 +380,42 @@ function SurveyFirewall() {
         Log("Private Profile Enabled: " + fwPolicy2.FirewallEnabled(2));
         Log("Public Profile Enabled: " + fwPolicy2.FirewallEnabled(4));
         
-        Log("\nEnabled Firewall Rules (Sample):");
+        Log("\nEnabled Firewall Rules:");
         var rules = fwPolicy2.Rules;
         var enumRules = new Enumerator(rules);
-        var count = 0;
-        for (; !enumRules.atEnd() && count < 20; enumRules.moveNext()) {
+        var enabledRules = [];
+        for (; !enumRules.atEnd(); enumRules.moveNext()) {
             var rule = enumRules.item();
             if (rule.Enabled) {
-                Log("  " + rule.Name + " (" + rule.ApplicationName + ")");
-                count++;
+                enabledRules.push(rule);
             }
         }
-        if (count >= 20) Log("  ... more rules exist.");
+        
+        // Sort by name for consistent output
+        enabledRules.sort(function(a, b) { return a.Name < b.Name ? -1 : 1; });
+        
+        if (enabledRules.length > 0) {
+            Log("  " + Pad("Name", 40) + Pad("Direction", 12) + Pad("Action", 10) + Pad("Protocol", 10) + Pad("Ports", 20));
+            Log("  " + Pad("----", 40) + Pad("---------", 12) + Pad("------", 10) + Pad("--------", 10) + Pad("-----", 20));
+            for (var i = 0; i < enabledRules.length; i++) {
+                var r = enabledRules[i];
+                var dir = (r.Direction === 1) ? "In" : "Out";
+                var act = (r.Action === 1) ? "Block" : "Allow";
+                var proto = r.Protocol;
+                // Protocol numbers to names
+                if (proto === 1) proto = "ICMP";
+                else if (proto === 6) proto = "TCP";
+                else if (proto === 17) proto = "UDP";
+                else if (proto === 47) proto = "GRE";
+                else if (proto === 58) proto = "ICMPv6";
+                var ports = r.LocalPorts || "Any";
+                var name = r.Name ? r.Name.substring(0, 39) : "Unknown";
+                Log("  " + Pad(name, 40) + Pad(dir, 12) + Pad(act, 10) + Pad(proto, 10) + Pad(String(ports).substring(0, 19), 20));
+            }
+            Log("\n  Total enabled rules: " + enabledRules.length);
+        } else {
+            Log("  No enabled firewall rules found.");
+        }
     } catch (e) {
         Log("Error querying Firewall: " + e.message);
     }
