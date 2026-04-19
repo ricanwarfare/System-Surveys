@@ -215,7 +215,7 @@ function GetFileCompany(path) {
 }
 
 function SurveyProcesses() {
-    Section("Running Processes (Batch Certutil Hashing)");
+    Section("Running Processes (SHA-1 Hashing)");
     var processes = [];
     var uniquePaths = {};
     
@@ -244,7 +244,7 @@ function SurveyProcesses() {
             batFile.WriteLine("@echo off");
             for (var p in uniquePaths) {
                 if (fso.FileExists(p)) {
-                    batFile.WriteLine('certutil -hashfile "' + EscapeBatch(p) + '" SHA256');
+                    batFile.WriteLine('certutil -hashfile "' + EscapeBatch(p) + '" SHA1');
                 }
             }
             batFile.Close();
@@ -262,10 +262,11 @@ function SurveyProcesses() {
                 var hashBuffer = "";
                 for (var i = 0; i < lines.length; i++) {
                     var line = lines[i].replace(/\r/g, "");
-                    // CertUtil outputs: "SHA256 hash of C:\path\file.exe:\n<hash>\n  CertUtil: -hashfile command completed successfully."
+                    // CertUtil outputs: "SHA1 hash of C:\path\file.exe:\n<hash>\n  CertUtil: -hashfile command completed successfully."
+                    // SHA-1 is 40 hex chars — always on one line, no wrapping
                     // On some Windows versions, the hash may be split across multiple lines
                     if (line.indexOf("hash of ") !== -1) {
-                        // Extract path from "SHA256 hash of C:\path\file.exe:"
+                        // Extract path from "SHA1 hash of C:\path\file.exe:"
                         var hashOfIdx = line.indexOf("hash of ");
                         // The path goes from after "hash of " to end of line (may end with colon)
                         var pathPart = line.substring(hashOfIdx + 8);
@@ -278,8 +279,8 @@ function SurveyProcesses() {
                         var cleaned = line.replace(/\s/g, "");
                         if (/^[0-9a-fA-F]+$/.test(cleaned) && cleaned.length > 0) {
                             hashBuffer += cleaned.toLowerCase();
-                            // SHA-256 is exactly 64 hex chars
-                            if (hashBuffer.length === 64) {
+                            // SHA-1 is exactly 40 hex chars
+                            if (hashBuffer.length === 40) {
                                 hashMap[currentPath.toLowerCase()] = hashBuffer;
                                 currentPath = null;
                                 hashBuffer = "";
@@ -308,8 +309,8 @@ function SurveyProcesses() {
     }
     
     // 3. Output results
-    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("SHA-256", 66) + "Path");
-    Log(Pad("---", 8) + Pad("----", 35) + Pad("-------", 66) + "----");
+    Log(Pad("PID", 8) + Pad("Name", 35) + Pad("SHA-1", 42) + "Path");
+    Log(Pad("---", 8) + Pad("----", 35) + Pad("-----", 42) + "----");
     
     for (var j = 0; j < processes.length; j++) {
         var p = processes[j];
