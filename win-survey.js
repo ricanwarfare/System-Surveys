@@ -129,10 +129,26 @@ function SurveyNetwork() {
     Section("Network Configuration");
     QueryWMI("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True", function(item) {
         Log("Adapter: " + item.Description);
-        Log("  MAC: " + item.MACAddress);
-        if (item.IPAddress) Log("  IP(s): " + item.IPAddress.toArray().join(", "));
-        if (item.DefaultIPGateway) Log("  Gateway: " + item.DefaultIPGateway.toArray().join(", "));
-        if (item.DNSServerSearchOrder) Log("  DNS: " + item.DNSServerSearchOrder.toArray().join(", "));
+        Log("  MAC: " + (item.MACAddress || "N/A"));
+        if (item.IPAddress && item.IPAddress !== null) {
+            var ips = item.IPAddress.toArray();
+            var masks = item.IPSubnet ? item.IPSubnet.toArray() : [];
+            for (var i = 0; i < ips.length; i++) {
+                // Filter out IPv6 if desired, or show both
+                Log("  IP: " + ips[i] + (masks[i] ? " (" + masks[i] + ")" : ""));
+            }
+        } else {
+            Log("  IP: N/A");
+        }
+        if (item.DefaultIPGateway && item.DefaultIPGateway !== null) {
+            Log("  Gateway: " + item.DefaultIPGateway.toArray().join(", "));
+        }
+        if (item.DNSServerSearchOrder && item.DNSServerSearchOrder !== null) {
+            Log("  DNS: " + item.DNSServerSearchOrder.toArray().join(", "));
+        } else {
+            Log("  DNS: N/A");
+        }
+        Log("  DHCP: " + (item.DHCPEnabled ? "Yes" : "No") + (item.DHCPServer ? " (" + item.DHCPServer + ")" : ""));
     });
 
     Section("Network Shares");
