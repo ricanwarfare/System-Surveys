@@ -30,6 +30,12 @@ function SafeEnvValue(key, value) {
     return value;
 }
 
+function countKeys(obj) {
+    var count = 0;
+    for (var k in obj) { if (obj.hasOwnProperty(k)) count++; }
+    return count;
+}
+
 function RandomSuffix() {
     var chars = "abcdefghijklmnopqrstuvwxyz0123456789";
     var result = "";
@@ -142,21 +148,6 @@ function SafeArray(arr) {
     }
 }
 
-function SafeArray(arr) {
-    // Safely convert WMI SafeArray to JScript array
-    try {
-        if (!arr || arr === null) return [];
-        if (typeof arr === 'unknown') {
-            try { return new VBArray(arr).toArray(); } catch(e2) { return []; }
-        }
-        if (typeof arr.toArray === 'function') return arr.toArray();
-        if (typeof arr === 'string') return [arr];
-        return [arr];
-    } catch (e) {
-        return [];
-    }
-}
-
 function RunCommand(cmd) {
     // Run a command and return its stdout, or empty string on error
     try {
@@ -168,45 +159,14 @@ function RunCommand(cmd) {
 }
 
 function SurveyNetwork() {
-    Section("Network Configuration (WMI)");
-    QueryWMI("SELECT * FROM Win32_NetworkAdapterConfiguration WHERE IPEnabled = True", function(item) {
-        Log("Adapter: " + item.Description);
-        Log("  MAC: " + (item.MACAddress || "N/A"));
-        
-        var ips = SafeArray(item.IPAddress);
-        var masks = SafeArray(item.IPSubnet);
-        if (ips.length > 0) {
-            for (var i = 0; i < ips.length; i++) {
-                Log("  IP: " + ips[i] + (masks[i] ? " (" + masks[i] + ")" : ""));
-            }
-        } else {
-            Log("  IP: (see netsh output below)");
-        }
-        
-        var gateways = SafeArray(item.DefaultIPGateway);
-        if (gateways.length > 0) {
-            Log("  Gateway: " + gateways.join(", "));
-        }
-        
-        var dns = SafeArray(item.DNSServerSearchOrder);
-        if (dns.length > 0) {
-            Log("  DNS: " + dns.join(", "));
-        } else {
-            Log("  DNS: (see netsh output below)");
-        }
-        
-        Log("  DHCP: " + (item.DHCPEnabled ? "Yes" : "No") + (item.DHCPServer ? " (" + item.DHCPServer + ")" : ""));
-    });
-
-    // Fallback: ipconfig /all + netsh for IP/DNS when WMI SafeArray fails
+    // Primary: ipconfig /all — most reliable for IP/DNS/DHCP on all Windows
     Section("Network Configuration (ipconfig /all)");
     try {
         var ipconfigOut = RunCommand('cmd.exe /c ipconfig /all 2>nul');
         if (ipconfigOut.length > 0) {
             var lines = ipconfigOut.split('\n');
             for (var i = 0; i < lines.length; i++) {
-                var line = lines[i].replace(/\r/g, "");
-                Log(line);
+                Log(lines[i].replace(/\r/g, ""));
             }
         } else {
             Log("  ipconfig not available");
@@ -330,80 +290,42 @@ function SurveyProcesses() {
         });
     });
     
-    // 2. Batch hash unique paths via a single background cmd process
+    // 2. Hash unique paths individually via certutil shell.Exec
+    // More reliable than batch file — no temp files, no parsing issues
     var hashMap = {};
     if (ENABLE_PROCESS_HASHING) {
-        try {
-            var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
-            var batPath = tempDir + "\\sys_hash_" + RandomSuffix() + ".bat";
-            var outPath = tempDir + "\\sys_hash_out_" + RandomSuffix() + ".txt";
-            
-            var batFile = fso.CreateTextFile(batPath, true);
-            batFile.WriteLine("@echo off");
-            for (var p in uniquePaths) {
-                if (fso.FileExists(p)) {
-                    batFile.WriteLine('certutil -hashfile "' + EscapeBatch(p) + '" SHA1');
+        var paths = [];
+        for (var p in uniquePaths) paths.push(p);
+        Log("  Hashing " + paths.length + " unique executables...");
+        
+        for (var i = 0; i < paths.length; i++) {
+            var filePath = paths[i];
+            if (!fso.FileExists(filePath)) continue;
+            try {
+                var exec = shell.Exec('certutil -hashfile "' + filePath + '" SHA1');
+                // Wait for completion (timeout after 5 seconds per file)
+                var waited = 0;
+                while (exec.Status === 0 && waited < 100) {
+                    WScript.Sleep(50);
+                    waited++;
                 }
-            }
-            batFile.Close();
-            
-            // Run entirely hidden (0) and wait to return (true)
-            shell.Run('cmd.exe /c "' + batPath + '" > "' + outPath + '" 2>&1', 0, true);
-            
-            if (fso.FileExists(outPath)) {
-                var outFile = fso.OpenTextFile(outPath, 1);
-                var output = outFile.AtEndOfStream ? "" : outFile.ReadAll();
-                outFile.Close();
-                
-                var lines = output.split('\n');
-                var currentPath = null;
-                var hashBuffer = "";
-                for (var i = 0; i < lines.length; i++) {
-                    var line = lines[i].replace(/\r/g, "");
-                    // CertUtil outputs: "SHA1 hash of C:\path\file.exe:\n<hash>\n  CertUtil: -hashfile command completed successfully."
-                    // SHA-1 is 40 hex chars — always on one line, no wrapping
-                    // On some Windows versions, the hash may be split across multiple lines
-                    if (line.indexOf("hash of ") !== -1) {
-                        // Extract path from "SHA1 hash of C:\path\file.exe:"
-                        var hashOfIdx = line.indexOf("hash of ");
-                        // The path goes from after "hash of " to end of line (may end with colon)
-                        var pathPart = line.substring(hashOfIdx + 8);
-                        // Remove trailing colon if present
-                        if (pathPart.charAt(pathPart.length - 1) === ':') pathPart = pathPart.substring(0, pathPart.length - 1);
-                        currentPath = pathPart;
-                        hashBuffer = "";
-                    } else if (currentPath) {
-                        // Accumulate hash characters (may be split across lines)
-                        var cleaned = line.replace(/\s/g, "");
-                        if (/^[0-9a-fA-F]+$/.test(cleaned) && cleaned.length > 0) {
-                            hashBuffer += cleaned.toLowerCase();
-                            // SHA-1 is exactly 40 hex chars
-                            if (hashBuffer.length === 40) {
-                                hashMap[currentPath.toLowerCase()] = hashBuffer;
-                                currentPath = null;
-                                hashBuffer = "";
-                            }
-                        } else if (cleaned.length === 0) {
-                            // Empty line — skip
-                        } else {
-                            // Not a hash line — reset
-                            currentPath = null;
-                            hashBuffer = "";
+                if (exec.Status === 1) {
+                    var output = exec.StdOut.ReadAll();
+                    // Parse: find the 40-char hex line after "SHA1 hash of"
+                    var lines = output.split('\n');
+                    for (var k = 0; k < lines.length; k++) {
+                        var line = lines[k].replace(/\r/g, "");
+                        if (line.length === 40 && /^[0-9a-fA-F]{40}$/.test(line)) {
+                            hashMap[filePath.toLowerCase()] = line.toLowerCase();
+                            break;
                         }
                     }
                 }
-            }
-        } catch(e) {
-            Log("Error during batch hashing: " + e.message);
-        } finally {
-            // Always clean up temp files
-            if (typeof outPath !== 'undefined' && fso.FileExists(outPath)) {
-                try { fso.DeleteFile(outPath); } catch(e2) {}
-            }
-            if (typeof batPath !== 'undefined' && fso.FileExists(batPath)) {
-                try { fso.DeleteFile(batPath); } catch(e2) {}
+            } catch(e) {
+                // Skip this file — hashing is best-effort
             }
         }
+        Log("  Hashed " + countKeys(hashMap) + " of " + paths.length + " executables");
     }
     
     // 3. Output results
