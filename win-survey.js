@@ -152,9 +152,10 @@ function RunCommand(cmd, timeoutMs) {
     // Run a command via shell.Run (hidden window) with temp file output + timeout
     // Default timeout: 30 seconds
     if (!timeoutMs) timeoutMs = 30000;
+    var tmpFile = "";
     try {
         var tempDir = shell.ExpandEnvironmentStrings("%TEMP%");
-        var tmpFile = tempDir + "\\sys_cmd_" + RandomSuffix() + ".out";
+        tmpFile = tempDir + "\\sys_cmd_" + RandomSuffix() + ".out";
         // Run hidden (0), don't wait (false) — we poll with our own timeout
         shell.Run('cmd.exe /c ' + cmd + ' > "' + tmpFile + '" 2>&1', 0, false);
         // Wait for output file to appear
@@ -180,10 +181,12 @@ function RunCommand(cmd, timeoutMs) {
             var f = fso.OpenTextFile(tmpFile, 1);
             var output = f.AtEndOfStream ? "" : f.ReadAll();
             f.Close();
-            try { fso.DeleteFile(tmpFile); } catch(e2) {}
             return output;
         }
-    } catch(e) {}
+    } catch(e) {
+    } finally {
+        try { if (tmpFile && fso.FileExists(tmpFile)) fso.DeleteFile(tmpFile); } catch(e2) {}
+    }
     return "";
 }
 
@@ -277,12 +280,18 @@ function SurveyUsers() {
 
 var shellCompanyIndex = -1;
 var globalShellApp = null;
+var namespaceCache = {};
 function GetFileCompany(path) {
     try {
         if (!fso.FileExists(path)) return "";
         if (!globalShellApp) globalShellApp = new ActiveXObject("Shell.Application");
-        var folderObj = globalShellApp.NameSpace(fso.GetParentFolderName(path));
-        if (!folderObj) return "";
+        var folderPath = fso.GetParentFolderName(path);
+        var folderObj = namespaceCache[folderPath];
+        if (!folderObj) {
+            folderObj = globalShellApp.NameSpace(folderPath);
+            if (!folderObj) return "";
+            namespaceCache[folderPath] = folderObj;
+        }
         var itemObj = folderObj.ParseName(fso.GetFileName(path));
         
         if (shellCompanyIndex === -1) {
@@ -394,7 +403,7 @@ function SurveyProcesses() {
             }
         }
         
-        Log(Pad(p.PID, 8) + Pad(dispName, 35) + Pad(hash, 66) + p.Path);
+        Log(Pad(p.PID, 8) + Pad(dispName, 35) + Pad(hash, 34) + p.Path);
     }
 }
 

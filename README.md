@@ -53,9 +53,8 @@ python3 linux-survey.py [options]
   -o, --output PATH     Output file path (default: survey_<hostname>.txt)
   -f, --format FORMAT   Output format: text or json (default: text)
       --skip MODULES    Module names to skip
-      --only MODULES   Only run these modules
-      --no-hash         Skip process hashing (default: hashing off)
-      --hash            Enable SHA-256 process hashing
+      --only MODULES    Only run these modules
+      --hash            Enable SHA-256 process hashing (default: off)
       --log-depth N     Number of log entries (default: 300)
   -h, --help            Show help message
 ```

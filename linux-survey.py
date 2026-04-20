@@ -36,6 +36,7 @@ class Config:
 config = Config()
 OUTPUT_BUFFER = []
 json_sections = {}
+_process_names = {}
 
 def report(msg, section_name=None):
     """Log a message to text buffer and optionally to JSON section."""
@@ -132,12 +133,13 @@ def parse_proc_addr_v6(addr):
             cur_len = 0
 
     if best_len >= 2:
-        compressed = ':'.join(parts[:best_start]) + '::' + ':'.join(parts[best_start + best_len:])
-        # Remove leading/trailing stray colons from edge cases
-        ip_str = compressed.strip(':')
-        # Ensure double colon is present
-        if '::' not in ip_str:
-            ip_str = '::' + ip_str if best_start == 0 else ip_str + '::'
+        if best_start == 0:
+            compressed = '::' + ':'.join(parts[best_len:])
+        elif best_start + best_len == len(parts):
+            compressed = ':'.join(parts[:best_start]) + '::'
+        else:
+            compressed = ':'.join(parts[:best_start]) + '::' + ':'.join(parts[best_start + best_len:])
+        ip_str = compressed
     else:
         ip_str = ':'.join(parts)
 
@@ -148,9 +150,10 @@ def parse_proc_addr_v6(addr):
 
 def survey_system_info():
     section("System Information")
-    report("Host: " + os.uname().nodename)
-    report("Kernel: " + os.uname().release)
-    report("Version: " + os.uname().version)
+    uname = os.uname()
+    report("Host: " + uname.nodename)
+    report("Kernel: " + uname.release)
+    report("Version: " + uname.version)
     
     try:
         with open("/proc/meminfo", "r") as f:
@@ -184,6 +187,7 @@ def survey_processes():
         try:
             with open(f"/proc/{pid}/comm", "r") as f:
                 name = f.read().strip()
+            _process_names[pid] = name
             with open(f"/proc/{pid}/cmdline", "r") as f:
                 # cmdline is null-terminated
                 cmdline = f.read().replace('\0', ' ').strip()
@@ -472,27 +476,33 @@ def survey_packages_detailed():
     if os.path.exists(dpkg_status):
         report("  Package Manager: DEB (Debian/Ubuntu)")
         try:
+            pkg_count = 0
+            shown = []
+            pkg_name = ""
+            pkg_version = ""
             with open(dpkg_status, "r") as f:
-                content = f.read()
-            # Parse package blocks
-            pkg_list = []
-            for block in content.split("\n\n"):
-                pkg_name = ""
-                pkg_version = ""
-                for line in block.splitlines():
+                for line in f:
                     if line.startswith("Package: "):
-                        pkg_name = line[len("Package: "):]
+                        pkg_name = line[9:].strip()
                     elif line.startswith("Version: "):
-                        pkg_version = line[len("Version: "):]
+                        pkg_version = line[9:].strip()
+                    elif line == "\n" and pkg_name:
+                        pkg_count += 1
+                        if pkg_count <= 30:
+                            shown.append((pkg_name, pkg_version))
+                        pkg_name = pkg_version = ""
+                # Handle last block if file doesn't end with blank line
                 if pkg_name:
-                    pkg_list.append((pkg_name, pkg_version))
+                    pkg_count += 1
+                    if pkg_count <= 30:
+                        shown.append((pkg_name, pkg_version))
 
-            report(f"  Total DEB packages: {len(pkg_list)}")
+            report(f"  Total DEB packages: {pkg_count}")
             report("  First 30 packages:")
-            for name, ver in pkg_list[:30]:
+            for name, ver in shown:
                 report(f"    {name} {ver}")
-            if len(pkg_list) > 30:
-                report(f"    ... and {len(pkg_list) - 30} more")
+            if pkg_count > 30:
+                report(f"    ... and {pkg_count - 30} more")
         except (PermissionError, FileNotFoundError, OSError):
             report("  (could not read dpkg status)")
 
@@ -533,18 +543,23 @@ def survey_security_products():
     }
     found_procs = {}
 
-    try:
-        pids = [d for d in os.listdir('/proc') if d.isdigit()]
-        for pid in pids:
-            try:
-                with open(f"/proc/{pid}/comm", "r") as f:
-                    comm = f.read().strip()
-                    if comm in target_procs:
-                        found_procs.setdefault(comm, []).append(pid)
-            except (PermissionError, FileNotFoundError, ProcessLookupError, OSError):
-                continue
-    except (PermissionError, FileNotFoundError, OSError):
-        pass
+    # Use cached process names from survey_processes() if available, else scan
+    proc_data = _process_names if _process_names else {}
+    if not proc_data:
+        try:
+            pids = [d for d in os.listdir('/proc') if d.isdigit()]
+            for pid in pids:
+                try:
+                    with open(f"/proc/{pid}/comm", "r") as f:
+                        proc_data[pid] = f.read().strip()
+                except (PermissionError, FileNotFoundError, ProcessLookupError, OSError):
+                    continue
+        except (PermissionError, FileNotFoundError, OSError):
+            pass
+
+    for pid, comm in proc_data.items():
+        if comm in target_procs:
+            found_procs.setdefault(comm, []).append(pid)
 
     if found_procs:
         report("  Running security processes:")
@@ -706,6 +721,26 @@ def survey_arp():
                     report(pad(p[0], 20) + pad(p[1], 10) + pad(p[2], 10) + p[3])
     except (PermissionError, FileNotFoundError, OSError): pass
 
+def _tail_lines(filepath, n):
+    """Read last N lines without loading the entire file into memory."""
+    try:
+        with open(filepath, "rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            if size == 0:
+                return []
+            data = b""
+            pos = size
+            while pos > 0 and data.count(b"\n") <= n:
+                read_size = min(8192, pos)
+                pos -= read_size
+                f.seek(pos)
+                data = f.read(read_size) + data
+        return data.decode("utf-8", errors="replace").splitlines()[-n:]
+    except (PermissionError, FileNotFoundError, OSError):
+        return []
+
+
 def survey_logs():
     section(f"Recent Logs (Last {config.log_depth} lines)")
     log_file = "/var/log/syslog" if os.path.exists("/var/log/syslog") else "/var/log/messages"
@@ -713,30 +748,31 @@ def survey_logs():
         if not os.access(log_file, os.R_OK):
             report(f"[!] Cannot read {log_file} — permission denied.")
         else:
-            try:
-                with open(log_file, "r") as f:
-                    lines = f.readlines()[-config.log_depth:]
+            lines = _tail_lines(log_file, config.log_depth)
+            if lines:
                 for line in lines:
                     report(line.strip())
-            except (PermissionError, FileNotFoundError, OSError):
-                report("Error reading log file (Permission Denied?)")
+            else:
+                report("No log lines found or error reading log file.")
 
 def main():
     parser = argparse.ArgumentParser(description='Linux System Survey — Living off the Land')
-    parser.add_argument('-o', '--output', default='', help='Output file path (default: survey_<hostname>.txt)'),
+    parser.add_argument('-o', '--output', default='', help='Output file path (default: survey_<hostname>.txt)')
     parser.add_argument('-f', '--format', choices=['text', 'json'], default='text', help='Output format')
     parser.add_argument('--skip', nargs='*', default=[], help='Module names to skip')
     parser.add_argument('--only', nargs='*', default=[], help='Only run these modules')
-    parser.add_argument('--no-hash', action='store_true', help='Skip process hashing (faster)')
+    parser.add_argument('--hash', action='store_true', help='Enable process hashing (SHA-256)')
     parser.add_argument('--log-depth', type=int, default=300, help='Number of log lines to include')
     args = parser.parse_args()
 
-    if not config.output_file:
+    if args.output:
+        config.output_file = args.output
+    else:
         config.output_file = f"survey_{os.uname().nodename}.txt"
     config.output_format = args.format
     config.skip_modules = args.skip
     config.only_modules = args.only
-    config.no_hash = args.no_hash
+    config.no_hash = not args.hash
     config.log_depth = args.log_depth
 
     if os.geteuid() != 0:
@@ -776,6 +812,12 @@ def main():
 
     for name, func in modules:
         func()
+
+    # Validate output path
+    _prohibited = ('/dev/', '/etc/', '/sys/', '/proc/', '/boot/')
+    if any(os.path.abspath(config.output_file).startswith(p) for p in _prohibited):
+        print(f"ERROR: Refusing to write to {config.output_file}")
+        sys.exit(1)
 
     # Write output
     with open(config.output_file, "w") as f:
